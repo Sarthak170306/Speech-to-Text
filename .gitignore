@@ -1,0 +1,24 @@
+# Node modules
+node_modules/
+frontend/node_modules/
+backend/node_modules/
+
+# Local environment files
+*.env
+uploads/
+
+# Build output
+dist/
+.build/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Ignore legacy or unrelated workspace files
+speech-to-text-frontend/
+package-lock.json
+package.json
+
+# VS Code settings
+.vscode/

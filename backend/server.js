@@ -29,13 +29,28 @@ app.get('/', (req, res) => {
 app.post('/api/upload', upload.single('audio'), async (req, res) => {
   try {
     if (!req.file) {
+      console.log("No audio file found in request.");
       return res.status(400).json({ success: false, message: 'No audio file uploaded' });
     }
 
-    const filePath = req.file.path; // local path provided by multer
+    // Safer path handling for Windows systems
+    const resolvedPath = req.file.path.replace(/\\/g, '/');
+    
+    // Log file details for debugging
+    console.log("Received file name:", req.file.originalname);
+    console.log("Received file size:", req.file.size);
+    console.log("Resolved local file path:", resolvedPath);
+
+    // Extract language code from request body (default to English 'en')
+    const languageCode = req.body.language || 'en';
+    console.log("Selected transcription language:", languageCode);
 
     // Send the local file to AssemblyAI for transcription
-    const transcriptResponse = await client.transcripts.transcribe({ audio: filePath });
+    const transcriptResponse = await client.transcripts.transcribe({
+      audio: resolvedPath,
+      speech_models: ["universal-3-pro", "universal-2"],
+      language_code: languageCode
+    });
 
     // Extract text from the AssemblyAI response
     const transcriptionText = transcriptResponse && transcriptResponse.text ? transcriptResponse.text : '';
@@ -50,8 +65,12 @@ app.post('/api/upload', upload.single('audio'), async (req, res) => {
 
     return res.status(200).json({ success: true, transcription: saved });
   } catch (error) {
-    console.error('Transcription or save error:', error);
-    return res.status(500).json({ success: false, message: 'Transcription failed', error: error.message });
+    console.error("Detailed AssemblyAI Error:", error.message || error);
+    return res.status(500).json({ 
+      success: false, 
+      message: 'Transcription failed', 
+      error: error.message || "Internal Server Error" 
+    });
   }
 });
 

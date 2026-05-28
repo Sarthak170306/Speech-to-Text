@@ -10,6 +10,7 @@ function App() {
   const [history, setHistory] = useState([]);
   const [copySuccess, setCopySuccess] = useState(false);
   const [language, setLanguage] = useState('en');
+  const [error, setError] = useState('');
 
   const mediaRecorderRef = useRef(null);
   const streamRef = useRef(null);
@@ -42,6 +43,7 @@ function App() {
       setRecordingBlob(null);
       setRecordingUrl(null);
       setSelectedFile(null);
+      setError('');
       audioChunksRef.current = [];
 
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -92,14 +94,26 @@ function App() {
   // Handle File Upload from Input
   const handleFileChange = (e) => {
     const file = e.target.files[0];
-    if (file) {
-      setSelectedFile(file);
+    if (!file) {
+      return;
+    }
+
+    if (!file.type || !file.type.startsWith('audio/')) {
+      setError('Invalid file type. Please upload a valid audio file (mp3, wav, m4a).');
+      setSelectedFile(null);
       setRecordingBlob(null);
       setRecordingUrl(null);
       setTranscription('');
-      // Auto-submit selected file
-      handleTranslate(file);
+      e.target.value = '';
+      return;
     }
+
+    setError('');
+    setSelectedFile(file);
+    setRecordingBlob(null);
+    setRecordingUrl(null);
+    setTranscription('');
+    handleTranslate(file);
   };
 
   // POST Audio to Backend API
@@ -111,6 +125,7 @@ function App() {
     }
 
     setLoading(true);
+    setError('');
     setTranscription('');
 
     try {
@@ -133,15 +148,16 @@ function App() {
 
       const result = await response.json();
       if (result.success) {
-        const text = result.transcription?.transcriptionText || result.transcription || 'No text transcribed.';
+        const saved = result.transcription;
+        const text = saved?.transcriptionText || 'No text transcribed.';
         setTranscription(text);
-        fetchHistory(); // Refresh translation history
+        setHistory((prevHistory) => [saved, ...prevHistory]);
       } else {
-        setTranscription('Failed: ' + (result.message || 'Transcription error.'));
+        setError(result.message || 'Transcription error occurred.');
       }
-    } catch (error) {
-      console.error('Translation error:', error);
-      setTranscription('Error connecting to backend server. Make sure http://localhost:5000 is running.');
+    } catch (translateError) {
+      console.error('Translation error:', translateError);
+      setError('Error connecting to backend server. Make sure http://localhost:5000 is running.');
     } finally {
       setLoading(false);
     }
@@ -171,6 +187,31 @@ function App() {
             Record voice notes or upload audio files to convert them to text using high-fidelity AI transcription.
           </p>
         </div>
+
+        {error && (
+          <div className="relative rounded-3xl border border-red-500/40 bg-red-500/10 p-4 text-red-100 shadow-lg shadow-red-900/20">
+            <div className="flex items-start gap-4">
+              <div className="flex-shrink-0 mt-0.5">
+                <div className="rounded-full bg-red-600/20 p-2">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-red-200">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-1.25-4.75a.75.75 0 011.5 0v.75a.75.75 0 01-1.5 0v-.75zm0-6.5a.75.75 0 011.5 0v4.75a.75.75 0 01-1.5 0V6.75z" clipRule="evenodd" />
+                  </svg>
+                </div>
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold text-red-100">Invalid file type</p>
+                <p className="mt-1 text-sm text-red-200 leading-6">{error}</p>
+              </div>
+              <button
+                onClick={() => setError('')}
+                className="text-red-200 hover:text-white transition-colors rounded-full p-1"
+                aria-label="Dismiss error"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Central Dashboard Card */}
         <div className="bg-slate-900/60 backdrop-blur-xl border border-slate-800/80 rounded-3xl p-6 sm:p-8 shadow-2xl shadow-slate-950/50 space-y-8">
@@ -335,7 +376,7 @@ function App() {
 
           {history.length === 0 ? (
             <div className="bg-slate-900/30 border border-slate-800/80 rounded-2xl py-12 text-center text-slate-500 text-sm">
-              Your transcription history is currently empty.
+              No past transcriptions yet.
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -344,23 +385,21 @@ function App() {
                   key={item._id}
                   className="bg-slate-900/40 hover:bg-slate-900/80 border border-slate-800/60 hover:border-slate-700/60 rounded-2xl p-5 shadow-lg shadow-slate-950/20 transition-all duration-300 group flex flex-col justify-between"
                 >
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2 max-w-[70%]">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-indigo-400 shrink-0">
-                          <path d="M10 3.75a2 2 0 1 0-4 0 2 2 0 0 0 4 0ZM17.25 4.5a.75.75 0 0 0-.75-.75h-2.5a.75.75 0 0 0 0 1.5h2.5a.75.75 0 0 0 .75-.75ZM17.25 7.5a.75.75 0 0 0-.75-.75h-2.5a.75.75 0 0 0 0 1.5h2.5a.75.75 0 0 0 .75-.75ZM17.25 10.5a.75.75 0 0 0-.75-.75h-2.5a.75.75 0 0 0 0 1.5h2.5a.75.75 0 0 0 .75-.75ZM17.25 13.5a.75.75 0 0 0-.75-.75h-2.5a.75.75 0 0 0 0 1.5h2.5a.75.75 0 0 0 .75-.75ZM17.25 16.5a.75.75 0 0 0-.75-.75h-2.5a.75.75 0 0 0 0 1.5h2.5a.75.75 0 0 0 .75-.75ZM2.75 4.5a.75.75 0 0 1 .75-.75h2.5a.75.75 0 0 1 0 1.5h-2.5a.75.75 0 0 1-.75-.75ZM2.75 7.5a.75.75 0 0 1 .75-.75h2.5a.75.75 0 0 1 0 1.5h-2.5a.75.75 0 0 1-.75-.75ZM2.75 10.5a.75.75 0 0 1 .75-.75h2.5a.75.75 0 0 1 0 1.5h-2.5a.75.75 0 0 1-.75-.75ZM2.75 13.5a.75.75 0 0 1 .75-.75h2.5a.75.75 0 0 1 0 1.5h-2.5a.75.75 0 0 1-.75-.75ZM2.75 16.5a.75.75 0 0 1 .75-.75h2.5a.75.75 0 0 1 0 1.5h-2.5a.75.75 0 0 1-.75-.75ZM10 14.75a2 2 0 1 1-4 0 2 2 0 0 1 4 0ZM12 9.25a2 2 0 1 0 0-4 2 2 0 0 0 0 4ZM14 14.75a2 2 0 1 1-4 0 2 2 0 0 1 4 0Z" />
-                        </svg>
-                        <span className="text-xs font-semibold text-slate-300 truncate font-mono" title={item.fileName}>
-                          {item.fileName}
-                        </span>
+                  <div className="space-y-4">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="space-y-1 min-w-0">
+                        <p className="text-xs uppercase tracking-[0.18em] text-indigo-300 font-semibold">File</p>
+                        <p className="text-sm font-semibold text-slate-100 truncate" title={item.fileName}>{item.fileName}</p>
                       </div>
-                      <span className="text-[10px] text-slate-500">
-                        {item.createdAt ? new Date(item.createdAt).toLocaleDateString() : 'Recent'}
+                      <span className="whitespace-nowrap text-[11px] text-slate-500">
+                        {item.createdAt ? new Date(item.createdAt).toLocaleString() : 'Unknown time'}
                       </span>
                     </div>
-                    <p className="text-xs text-slate-400 line-clamp-3 leading-relaxed font-sans select-all">
-                      {item.transcriptionText}
-                    </p>
+                    <div className="rounded-2xl bg-slate-950/80 border border-slate-800/70 p-4">
+                      <p className="text-sm text-slate-300 leading-6 whitespace-pre-wrap break-words">
+                        {item.transcriptionText}
+                      </p>
+                    </div>
                   </div>
                   <div className="mt-4 pt-3 border-t border-slate-800/40 flex items-center justify-between">
                     <span className="text-[10px] text-indigo-400/70 font-semibold uppercase tracking-wider">MERN + AssemblyAI</span>

@@ -3,6 +3,8 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
 import multer from 'multer';
+import fs from 'fs/promises';
+import { clerkMiddleware, getAuth, requireAuth } from '@clerk/express';
 import { AssemblyAI } from 'assemblyai';
 import Transcription from './models/Transcription.js';
 
@@ -11,6 +13,11 @@ dotenv.config();
 const app = express();
 const upload = multer({ dest: 'uploads/' });
 const PORT = process.env.PORT || 5000;
+const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
+
+if (!process.env.CLERK_SECRET_KEY) {
+  console.warn('Warning: CLERK_SECRET_KEY is not set in .env. Protected API routes will fail until it is provided.');
+}
 
 // Initialize AssemblyAI client
 if (!process.env.ASSEMBLYAI_API_KEY) {
@@ -18,16 +25,24 @@ if (!process.env.ASSEMBLYAI_API_KEY) {
 }
 const client = new AssemblyAI({ apiKey: process.env.ASSEMBLYAI_API_KEY });
 
-app.use(cors());
+app.use(
+  cors({
+    origin: CLIENT_ORIGIN,
+    credentials: true,
+  })
+);
 app.use(express.json());
+app.use(clerkMiddleware());
 
 app.get('/', (req, res) => {
   res.json({ status: 'ok', message: 'Speech to Text backend is running' });
 });
 
 // Upload and transcribe endpoint
-app.post('/api/upload', upload.single('audio'), async (req, res) => {
+app.post('/api/upload', requireAuth(), upload.single('audio'), async (req, res) => {
   try {
+    const { userId } = getAuth(req);
+
     if (!req.file) {
       console.log("No audio file found in request.");
       return res.status(400).json({ success: false, message: 'No audio file uploaded' });
@@ -57,14 +72,33 @@ app.post('/api/upload', upload.single('audio'), async (req, res) => {
 
     // Save transcription to MongoDB
     const doc = new Transcription({
+      userId,
       fileName: req.file.originalname,
       transcriptionText
     });
 
     const saved = await doc.save();
 
-    return res.status(200).json({ success: true, transcription: saved });
+    try {
+      await fs.unlink(resolvedPath);
+    } catch (unlinkError) {
+      console.warn('Could not remove uploaded temp file:', unlinkError.message);
+    }
+
+    return res.status(200).json({
+      success: true,
+      transcription: saved,
+      savedToHistory: true,
+    });
   } catch (error) {
+    if (req.file?.path) {
+      try {
+        await fs.unlink(req.file.path);
+      } catch (unlinkError) {
+        console.warn('Could not remove uploaded temp file:', unlinkError.message);
+      }
+    }
+
     console.error("Detailed AssemblyAI Error:", error.message || error);
     return res.status(500).json({ 
       success: false, 
@@ -74,14 +108,86 @@ app.post('/api/upload', upload.single('audio'), async (req, res) => {
   }
 });
 
-// History route: returns previous transcriptions sorted by newest first
-app.get('/api/history', async (req, res) => {
+// Save completed live stream transcription to history
+app.post('/api/live-stream', requireAuth(), async (req, res) => {
   try {
-    const items = await Transcription.find().sort({ createdAt: -1 });
+    const { userId } = getAuth(req);
+    const { transcriptionText } = req.body;
+
+    if (!transcriptionText || !String(transcriptionText).trim()) {
+      return res.status(400).json({ success: false, message: 'No live stream text to save' });
+    }
+
+    const savedAt = new Date();
+    const fileName = `Live Stream — ${savedAt.toLocaleString()}`;
+
+    const doc = new Transcription({
+      userId,
+      fileName,
+      transcriptionText: String(transcriptionText).trim(),
+    });
+
+    const saved = await doc.save();
+
+    return res.status(200).json({ success: true, transcription: saved });
+  } catch (error) {
+    console.error('Error saving live stream:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to save live stream to history',
+      error: error.message,
+    });
+  }
+});
+
+// History route: returns previous transcriptions sorted by newest first
+app.get('/api/history', requireAuth(), async (req, res) => {
+  try {
+    const { userId } = getAuth(req);
+    const items = await Transcription.find({ userId }).sort({ createdAt: -1 });
     return res.status(200).json({ success: true, data: items });
   } catch (error) {
     console.error('Error fetching history:', error);
     return res.status(500).json({ success: false, message: 'Failed to fetch history', error: error.message });
+  }
+});
+
+app.get('/api/realtime-token', requireAuth(), async (req, res) => {
+  try {
+    if (!process.env.ASSEMBLYAI_API_KEY) {
+      return res.status(500).json({ message: 'ASSEMBLYAI_API_KEY is not configured on the server' });
+    }
+
+    const expiresIn = 60;
+    const response = await fetch(
+      `https://streaming.assemblyai.com/v3/token?expires_in_seconds=${expiresIn}`,
+      {
+        method: 'GET',
+        headers: {
+          authorization: process.env.ASSEMBLYAI_API_KEY,
+        },
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error('AssemblyAI token request failed:', data);
+      return res.status(response.status).json({
+        message: 'Failed to fetch realtime token from AssemblyAI',
+        details: data,
+      });
+    }
+
+    if (!data?.token) {
+      console.error('AssemblyAI token missing in response:', data);
+      return res.status(500).json({ message: 'Realtime token missing in AssemblyAI response', details: data });
+    }
+
+    return res.json({ token: data.token });
+  } catch (error) {
+    console.error('Realtime token fetch failed:', error);
+    return res.status(500).json({ message: 'Error fetching realtime token', error: error.message });
   }
 });
 
@@ -91,10 +197,7 @@ async function startServer() {
       throw new Error('MONGO_URI must be defined in .env');
     }
 
-    await mongoose.connect(process.env.MONGO_URI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true
-    });
+    await mongoose.connect(process.env.MONGO_URI);
 
     console.log('Connected to MongoDB');
 

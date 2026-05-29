@@ -1,6 +1,75 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  SignedIn,
+  SignedOut,
+  SignInButton,
+  UserButton,
+  useUser,
+  useAuth,
+} from '@clerk/clerk-react';
+import { API_BASE } from './lib/api.js';
 
-function App() {
+function LandingPage() {
+  return (
+    <div className="min-h-screen bg-slate-950 bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(120,119,198,0.25),rgba(255,255,255,0))] text-slate-100 flex flex-col items-center justify-center py-12 px-4 sm:px-6 lg:px-8 relative overflow-hidden">
+      {/* Glow effects */}
+      <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 rounded-full bg-indigo-500/10 blur-[100px] pointer-events-none"></div>
+      <div className="absolute bottom-1/4 left-1/3 w-72 h-72 rounded-full bg-blue-500/10 blur-[80px] pointer-events-none"></div>
+
+      <div className="w-full max-w-lg rounded-3xl border border-slate-800/80 bg-slate-900/60 backdrop-blur-xl p-10 text-center shadow-2xl shadow-indigo-500/5 space-y-8 relative z-10 transition-all duration-500 hover:border-slate-700/80">
+        {/* Glow-enhanced AI Icon */}
+        <div className="relative mx-auto w-24 h-24 mb-2">
+          <div className="absolute inset-0 bg-gradient-to-tr from-blue-600 to-indigo-600 rounded-2xl blur-xl opacity-40 animate-pulse"></div>
+          <div className="relative w-full h-full bg-slate-950 rounded-2xl border border-slate-800 flex items-center justify-center text-indigo-400 shadow-inner">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-12 h-12">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z" />
+            </svg>
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          <h1 className="text-4xl font-extrabold tracking-tight bg-gradient-to-r from-white via-slate-100 to-indigo-300 bg-clip-text text-transparent">
+            AI Voice Transcriber
+          </h1>
+          <p className="text-sm text-slate-400 leading-relaxed max-w-sm mx-auto">
+            Convert voice recordings and files into high-accuracy text in real-time, powered by deep learning AI models.
+          </p>
+        </div>
+
+        <div className="pt-4">
+          <SignInButton mode="modal">
+            <button className="px-8 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-semibold rounded-xl shadow-lg transition-all transform hover:scale-105 hover:shadow-indigo-500/20 active:scale-95 duration-200">
+              Get Started / Sign In
+            </button>
+          </SignInButton>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TranscriberApp() {
+  const { user } = useUser();
+  const { getToken, isLoaded, isSignedIn } = useAuth();
+
+  const authFetch = useCallback(
+    async (path, options = {}) => {
+      const token = await getToken();
+      if (!token) {
+        throw new Error('Please sign in to continue.');
+      }
+
+      const headers = new Headers(options.headers || {});
+      headers.set('Authorization', `Bearer ${token}`);
+
+      return fetch(`${API_BASE}${path}`, {
+        ...options,
+        headers,
+      });
+    },
+    [getToken]
+  );
+
   const [isRecording, setIsRecording] = useState(false);
   const [recordingBlob, setRecordingBlob] = useState(null);
   const [recordingUrl, setRecordingUrl] = useState(null);
@@ -11,30 +80,48 @@ function App() {
   const [copySuccess, setCopySuccess] = useState(false);
   const [language, setLanguage] = useState('en');
   const [error, setError] = useState('');
+  const [liveStreaming, setLiveStreaming] = useState(false);
+  const [liveText, setLiveText] = useState('');
+  const [savingLiveStream, setSavingLiveStream] = useState(false);
+
+  const LIVE_CAPTION_PLACEHOLDER =
+    'Live captions will appear here once the stream begins. Speak into the mic and watch the text update in real time.';
 
   const mediaRecorderRef = useRef(null);
   const streamRef = useRef(null);
   const audioChunksRef = useRef([]);
   const fileInputRef = useRef(null);
+  const wsRef = useRef(null);
+  const audioContextRef = useRef(null);
+  const processorRef = useRef(null);
+  const micStreamRef = useRef(null);
+  const liveTranscriptRef = useRef('');
 
-  // Fetch History from API
   const fetchHistory = async () => {
     try {
-      const response = await fetch('http://localhost:5000/api/history');
-      if (response.ok) {
-        const result = await response.json();
-        if (result.success) {
-          setHistory(result.data);
-        }
+      const response = await authFetch('/api/history');
+      const result = await response.json();
+      if (response.ok && result.success) {
+        setHistory(result.data);
+        return true;
       }
-    } catch (error) {
-      console.error('Error fetching history:', error);
+      return false;
+    } catch (historyError) {
+      console.error('Error fetching history:', historyError);
+      return false;
     }
   };
 
   useEffect(() => {
+    if (!isLoaded || !isSignedIn) {
+      return undefined;
+    }
+
     fetchHistory();
-  }, []);
+    return () => {
+      stopLiveStream();
+    };
+  }, [isLoaded, isSignedIn]);
 
   // Start Audio Recording using MediaRecorder API
   const startRecording = async () => {
@@ -98,7 +185,10 @@ function App() {
       return;
     }
 
-    if (!file.type || !file.type.startsWith('audio/')) {
+    const isAudioFile =
+      (file.type && file.type.startsWith('audio/')) || /\.(mp3|wav|m4a)$/i.test(file.name);
+
+    if (!isAudioFile) {
       setError('Invalid file type. Please upload a valid audio file (mp3, wav, m4a).');
       setSelectedFile(null);
       setRecordingBlob(null);
@@ -137,29 +227,261 @@ function App() {
       }
       formData.append('language', language);
 
-      const response = await fetch('http://localhost:5000/api/upload', {
+      const response = await authFetch('/api/upload', {
         method: 'POST',
         body: formData,
       });
 
+      const result = await response.json();
+
       if (!response.ok) {
-        throw new Error('Transcription failed. Backend error.');
+        throw new Error(result.message || result.error || 'Transcription failed. Backend error.');
       }
 
-      const result = await response.json();
-      if (result.success) {
-        const saved = result.transcription;
-        const text = saved?.transcriptionText || 'No text transcribed.';
+      if (result.success && result.transcription) {
+        const text = result.transcription.transcriptionText || 'No text transcribed.';
         setTranscription(text);
-        setHistory((prevHistory) => [saved, ...prevHistory]);
+        await fetchHistory();
       } else {
         setError(result.message || 'Transcription error occurred.');
       }
     } catch (translateError) {
       console.error('Translation error:', translateError);
-      setError('Error connecting to backend server. Make sure http://localhost:5000 is running.');
+      setError('Error connecting to the backend. Make sure the server is running and you are signed in.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const downsampleBuffer = (buffer, rate, outRate) => {
+    if (outRate === rate) {
+      return buffer;
+    }
+
+    const sampleRateRatio = rate / outRate;
+    const newLength = Math.round(buffer.length / sampleRateRatio);
+    const result = new Float32Array(newLength);
+    let offsetResult = 0;
+    let offsetBuffer = 0;
+
+    while (offsetResult < newLength) {
+      const nextOffsetBuffer = Math.round((offsetResult + 1) * sampleRateRatio);
+      let staticAccum = 0;
+      let count = 0;
+      for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i += 1) {
+        staticAccum += buffer[i];
+        count += 1;
+      }
+      result[offsetResult] = count === 0 ? 0 : staticAccum / count;
+      offsetResult += 1;
+      offsetBuffer = nextOffsetBuffer;
+    }
+
+    return result;
+  };
+
+  const convertFloat32ToInt16 = (buffer) => {
+    const l = buffer.length;
+    const result = new Int16Array(l);
+    for (let i = 0; i < l; i += 1) {
+      const s = Math.max(-1, Math.min(1, buffer[i]));
+      result[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+    }
+    return result;
+  };
+
+  const encodeAudio = (samples, sampleRate) => {
+    const downsampled = downsampleBuffer(samples, sampleRate, 16000);
+    return convertFloat32ToInt16(downsampled);
+  };
+
+  const streamingLanguage = (code) => (code === 'hi' ? 'multi' : 'en');
+
+  const saveLiveStreamToHistory = async (text) => {
+    const response = await authFetch('/api/live-stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ transcriptionText: text }),
+    });
+
+    const result = await response.json();
+    if (!response.ok || !result.success) {
+      throw new Error(result.message || 'Failed to save live stream to history');
+    }
+
+    return result.transcription;
+  };
+
+  const resetLiveCaptionFeed = () => {
+    liveTranscriptRef.current = '';
+    setLiveText('');
+  };
+
+  const stopLiveStream = async ({ saveToHistory = false } = {}) => {
+    const transcriptToSave = liveTranscriptRef.current.trim();
+
+    setLiveStreaming(false);
+
+    if (processorRef.current) {
+      processorRef.current.disconnect();
+      processorRef.current.onaudioprocess = null;
+      processorRef.current = null;
+    }
+
+    if (audioContextRef.current) {
+      audioContextRef.current.close().catch(() => null);
+      audioContextRef.current = null;
+    }
+
+    if (micStreamRef.current) {
+      micStreamRef.current.getTracks().forEach((track) => track.stop());
+      micStreamRef.current = null;
+    }
+
+    if (wsRef.current) {
+      if (wsRef.current.readyState === WebSocket.OPEN) {
+        try {
+          wsRef.current.send(JSON.stringify({ type: 'Terminate' }));
+        } catch (err) {
+          console.error('Failed to terminate websocket session:', err);
+        }
+      }
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+
+    if (saveToHistory && transcriptToSave) {
+      setSavingLiveStream(true);
+      try {
+        await saveLiveStreamToHistory(transcriptToSave);
+        await fetchHistory();
+      } catch (saveError) {
+        console.error('Failed to save live stream:', saveError);
+        setError(saveError.message || 'Could not save live stream to history.');
+      } finally {
+        setSavingLiveStream(false);
+      }
+    }
+
+    resetLiveCaptionFeed();
+  };
+
+  const endLiveStream = () => {
+    stopLiveStream({ saveToHistory: true });
+  };
+
+  const startLiveStream = async () => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setError('Live streaming requires microphone access in a secure browser context.');
+      return;
+    }
+
+    setError('');
+    liveTranscriptRef.current = '';
+    setLiveText('Connecting live stream...');
+
+    try {
+      const tokenResponse = await authFetch('/api/realtime-token');
+      const tokenPayload = await tokenResponse.json().catch(() => ({}));
+      if (!tokenResponse.ok) {
+        throw new Error(
+          tokenPayload.message ||
+            tokenPayload.details?.error ||
+            'Realtime token fetch failed. Check that ASSEMBLYAI_API_KEY is set on the backend.'
+        );
+      }
+
+      const token = tokenPayload?.token;
+      if (!token) {
+        throw new Error('Realtime token was not returned from the backend.');
+      }
+
+      const streamLang = streamingLanguage(language);
+      const speechModel =
+        streamLang === 'multi' ? 'universal-streaming-multilingual' : 'universal-streaming-english';
+      const wsUrl =
+        `wss://streaming.assemblyai.com/v3/ws?sample_rate=16000&encoding=pcm_s16le&formatted_finals=true&language=${streamLang}&speech_model=${speechModel}&token=${encodeURIComponent(token)}`;
+      const socket = new WebSocket(wsUrl);
+      wsRef.current = socket;
+
+      let committedText = '';
+
+      socket.onopen = async () => {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          micStreamRef.current = stream;
+          const audioContext = new AudioContext();
+          audioContextRef.current = audioContext;
+          const source = audioContext.createMediaStreamSource(stream);
+          const processor = audioContext.createScriptProcessor(4096, 1, 1);
+          processorRef.current = processor;
+
+          processor.onaudioprocess = (event) => {
+            if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+              return;
+            }
+            const inputData = event.inputBuffer.getChannelData(0);
+            const pcmChunk = encodeAudio(inputData, audioContext.sampleRate);
+            wsRef.current.send(pcmChunk.buffer);
+          };
+
+          source.connect(processor);
+          processor.connect(audioContext.destination);
+          setLiveStreaming(true);
+          setLiveText('Live stream started. Speak now and captions will appear below.');
+        } catch (micError) {
+          console.error('Microphone capture failed for live stream:', micError);
+          setError('Unable to access microphone for live streaming.');
+          stopLiveStream();
+        }
+      };
+
+      socket.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+
+          if (msg.type === 'Begin') {
+            setLiveText('Listening...');
+            return;
+          }
+
+          if (msg.type === 'Turn') {
+            const liveLine = committedText + (msg.transcript || '');
+            const trimmedLine = liveLine.trim();
+            liveTranscriptRef.current = trimmedLine;
+            setLiveText(trimmedLine || 'Listening...');
+
+            if (msg.end_of_turn && msg.transcript) {
+              const segment = msg.turn_is_formatted ? msg.transcript : `${msg.transcript}.`;
+              committedText += `${segment} `;
+              liveTranscriptRef.current = committedText.trim();
+            }
+            return;
+          }
+
+          if (msg.type === 'Termination') {
+            setLiveText((prev) => prev || 'Live stream ended.');
+          }
+        } catch (messageError) {
+          console.error('Realtime message parse failed:', messageError);
+        }
+      };
+
+      socket.onerror = () => {
+        setError('Realtime streaming connection failed. Please try again.');
+      };
+
+      socket.onclose = (event) => {
+        setLiveStreaming(false);
+        if (!event.wasClean) {
+          setError('Live stream disconnected unexpectedly. Please start again.');
+        }
+      };
+    } catch (streamError) {
+      console.error('Realtime stream setup failed:', streamError);
+      setError(streamError.message || 'Failed to start live stream.');
+      setLiveText('');
+      stopLiveStream();
     }
   };
 
@@ -177,9 +499,28 @@ function App() {
       {/* Container */}
       <div className="w-full max-w-4xl space-y-8">
         
+        {/* Premium Dashboard Welcome Header */}
+        <div className="w-full flex items-center justify-between bg-slate-900/40 border border-slate-800/60 rounded-3xl p-4 sm:px-6 backdrop-blur-xl shadow-lg">
+          <div className="text-left">
+            <h2 className="text-base sm:text-lg font-bold text-slate-100 flex items-center gap-2">
+              Welcome, {user?.firstName || 'User'}! 👋
+            </h2>
+            <p className="text-[11px] text-slate-400 hidden sm:block">Ready to transcribe your voice notes today?</p>
+          </div>
+          <div className="flex items-center gap-4">
+            <UserButton 
+              afterSignOutUrl="/" 
+              appearance={{ 
+                elements: { 
+                  avatarBox: 'w-10 h-10 border-2 border-indigo-500/40 hover:border-indigo-500/80 transition-all' 
+                } 
+              }} 
+            />
+          </div>
+        </div>
+        
         {/* Header Section */}
         <div className="text-center space-y-2">
-          
           <h1 className="text-4xl sm:text-5xl font-extrabold tracking-tight bg-gradient-to-r from-white via-slate-200 to-indigo-400 bg-clip-text text-transparent">
             AI Voice Transcriber
           </h1>
@@ -199,7 +540,7 @@ function App() {
                 </div>
               </div>
               <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold text-red-100">Invalid file type</p>
+                <p className="text-sm font-semibold text-red-100">Notification</p>
                 <p className="mt-1 text-sm text-red-200 leading-6">{error}</p>
               </div>
               <button
@@ -323,6 +664,31 @@ function App() {
 
           </div>
 
+          <div className="rounded-3xl border border-slate-800/80 bg-slate-950/50 p-6 shadow-xl shadow-slate-950/10">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+              <div>
+                <p className="text-sm uppercase tracking-[0.24em] text-indigo-300 font-semibold">Live Captions</p>
+                <h3 className="mt-2 text-2xl font-bold text-slate-100">🔥 Live Captions (Real-time Stream)</h3>
+                <p className="mt-2 text-sm text-slate-400 max-w-2xl">
+                  Stream your mic audio directly to AssemblyAI and display live captions like a YouTube subtitle experience.
+                </p>
+              </div>
+              <button
+                onClick={liveStreaming ? endLiveStream : startLiveStream}
+                disabled={savingLiveStream}
+                className={`inline-flex items-center justify-center rounded-2xl px-5 py-3 text-sm font-semibold transition-all active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed ${liveStreaming ? 'bg-red-600 text-white hover:bg-red-500' : 'bg-indigo-600 text-white hover:bg-indigo-500'}`}
+              >
+                {savingLiveStream ? 'Saving...' : liveStreaming ? 'Stop Live Stream' : 'Start Live Stream'}
+              </button>
+            </div>
+            <div className="mt-6 rounded-[2rem] border border-indigo-500/20 bg-slate-900/90 p-6 min-h-[170px] shadow-[0_0_40px_rgba(99,102,241,0.15)]">
+              <p className="text-xs uppercase tracking-[0.24em] text-indigo-300 mb-3">Live caption feed</p>
+              <div className="min-h-[100px] rounded-3xl border border-indigo-500/15 bg-slate-950/80 p-4 text-slate-100 text-sm leading-7 whitespace-pre-wrap break-words shadow-inner shadow-slate-950/10">
+                {liveText ? liveText : LIVE_CAPTION_PLACEHOLDER}
+              </div>
+            </div>
+          </div>
+
           {/* Results Area */}
           <div className="border-t border-slate-800/80 pt-8 space-y-4">
             <div className="flex justify-between items-center">
@@ -424,6 +790,15 @@ function App() {
   );
 }
 
-export default App;
-
-
+export default function App() {
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-100">
+      <SignedOut>
+        <LandingPage />
+      </SignedOut>
+      <SignedIn>
+        <TranscriberApp />
+      </SignedIn>
+    </div>
+  );
+}

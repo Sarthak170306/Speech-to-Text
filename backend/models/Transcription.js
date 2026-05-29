@@ -1,6 +1,11 @@
 import mongoose from 'mongoose';
 
 const transcriptionSchema = new mongoose.Schema({
+  userId: {
+    type: String,
+    required: true,
+    index: true,
+  },
   fileName: {
     type: String,
     required: true

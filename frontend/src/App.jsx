@@ -239,6 +239,7 @@ function TranscriberApp() {
       }
 
       if (result.success && result.transcription) {
+        const totalWords = history?.reduce((acc, item) => acc + (item.transcriptionText ? item.transcriptionText.split(/\s+/).filter(Boolean).length : 0), 0) || 0;
         const text = result.transcription.transcriptionText || 'No text transcribed.';
         setTranscription(text);
         await fetchHistory();
@@ -494,6 +495,10 @@ function TranscriberApp() {
     }
   };
 
+  // Duplicate totalWords removed; calculation defined later.
+  const totalWords = history?.reduce((acc, item) => acc + (item.text ? item.text.split(/\s+/).filter(Boolean).length : 0), 0) || 0;
+
+
   return (
     <div className="min-h-screen bg-slate-950 bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(120,119,198,0.2),rgba(255,255,255,0))] text-slate-100 flex flex-col items-center py-12 px-4 sm:px-6 lg:px-8">
       {/* Container */}
@@ -665,6 +670,36 @@ function TranscriberApp() {
           </div>
 
           <div className="rounded-3xl border border-slate-800/80 bg-slate-950/50 p-6 shadow-xl shadow-slate-950/10">
+            {/* Analytics Row */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+              {/* Card 1: Total Notes */}
+              <div className="flex items-center justify-between rounded-xl bg-slate-800/30 border border-white/10 p-4 backdrop-blur-sm">
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">🎙️</span>
+                  <span className="text-sm font-medium text-slate-400">Total Notes</span>
+                </div>
+                <span className="text-lg font-semibold text-slate-100">{history?.length || 0}</span>
+              </div>
+
+              {/* Card 2: Words Captured */}
+              <div className="flex items-center justify-between rounded-xl bg-slate-800/30 border border-white/10 p-4 backdrop-blur-sm">
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">⏳</span>
+                  <span className="text-sm font-medium text-slate-400">Words Captured</span>
+                </div>
+                <span className="text-lg font-semibold text-slate-100">{totalWords}</span>
+              </div>
+
+              {/* Card 3: Engine */}
+              <div className="flex items-center justify-between rounded-xl bg-slate-800/30 border border-white/10 p-4 backdrop-blur-sm">
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">🌐</span>
+                  <span className="text-sm font-medium text-slate-400">Primary Engine</span>
+                </div>
+                <span className="text-xs font-semibold px-2.5 py-1 rounded-md bg-blue-500/10 text-blue-400 border border-blue-500/20">AssemblyAI v3</span>
+              </div>
+            </div>
+
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
               <div>
                 <p className="text-sm uppercase tracking-[0.24em] text-indigo-300 font-semibold">Live Captions</p>

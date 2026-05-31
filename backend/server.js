@@ -152,6 +152,21 @@ app.get('/api/history', requireAuth(), async (req, res) => {
   }
 });
 
+// Delete a specific history item
+app.delete('/api/history/:id', requireAuth(), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const deleted = await Transcription.findByIdAndDelete(id);
+    if (!deleted) {
+      return res.status(404).json({ success: false, message: 'History item not found' });
+    }
+    return res.status(200).json({ success: true, message: 'History item deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting history item:', error);
+    return res.status(500).json({ success: false, message: 'Failed to delete history item', error: error.message });
+  }
+});
+
 app.get('/api/realtime-token', requireAuth(), async (req, res) => {
   try {
     if (!process.env.ASSEMBLYAI_API_KEY) {
